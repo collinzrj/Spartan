@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.tcc": "cpp",
+        "*.sage": "python",
+        "libmy_crate.h": "c",
+        "liblibspartan.h": "c"
+    }
+}

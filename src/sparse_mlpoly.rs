@@ -17,7 +17,7 @@ use merlin::Transcript;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SparseMatEntry {
   row: usize,
   col: usize,
@@ -30,7 +30,7 @@ impl SparseMatEntry {
   }
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SparseMatPolynomial {
   num_vars_x: usize,
   num_vars_y: usize,

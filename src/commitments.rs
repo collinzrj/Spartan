@@ -3,8 +3,9 @@ use super::scalar::Scalar;
 use digest::{ExtendableOutput, Input};
 use sha3::Shake256;
 use std::io::Read;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct MultiCommitGens {
   pub n: usize,
   pub G: Vec<GroupElement>,

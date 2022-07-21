@@ -13,7 +13,7 @@ use rand::thread_rng;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct R1CSInstance {
   num_cons: usize,
   num_vars: usize,

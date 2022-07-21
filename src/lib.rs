@@ -1,8 +1,5 @@
 #![allow(non_snake_case)]
 #![feature(test)]
-#![deny(missing_docs)]
-#![feature(external_doc)]
-#![doc(include = "../README.md")]
 
 extern crate byteorder;
 extern crate core;
@@ -43,6 +40,13 @@ use scalar::Scalar;
 use serde::{Deserialize, Serialize};
 use timer::Timer;
 use transcript::{AppendToTranscript, ProofTranscript};
+use std::fs::File;
+use std::fs;
+use num::bigint::BigInt;
+use num::bigint::ToBigInt;
+use std::io::{self, prelude::*, BufReader};
+use libc;
+use std;
 
 /// `ComputationCommitment` holds a public preprocessed NP statement (e.g., R1CS)
 pub struct ComputationCommitment {
@@ -112,6 +116,7 @@ pub type VarsAssignment = Assignment;
 pub type InputsAssignment = Assignment;
 
 /// `Instance` holds the description of R1CS matrices
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Instance {
   inst: R1CSInstance,
 }
@@ -461,6 +466,7 @@ impl SNARK {
 }
 
 /// `NIZKGens` holds public parameters for producing and verifying proofs with the Spartan NIZK
+#[derive(Serialize, Deserialize, Debug)]
 pub struct NIZKGens {
   gens_r1cs_sat: R1CSGens,
 }
@@ -733,5 +739,72 @@ mod tests {
     assert!(proof
       .verify(&inst, &assignment_inputs, &mut verifier_transcript, &gens)
       .is_ok());
+  }
+}
+
+#[no_mangle]
+pub extern "C" fn nizk_generate(matrix_A: Vec<(usize, usize, [u8; 32])>, matrix_B: Vec<(usize, usize, [u8; 32])>, matrix_C: Vec<(usize, usize, [u8; 32])>, num_constraints: usize, num_variables: usize, num_inputs: usize) {  
+  let gens = NIZKGens::new(num_constraints, num_variables, num_inputs);
+  let inst = Instance::new(num_constraints, num_variables, num_inputs, &matrix_A, &matrix_B, &matrix_C).unwrap();
+
+  let gens_encoded = bincode::serialize(&gens).unwrap();
+  fs::write("nizk_gens", gens_encoded).expect("Unable to write file");
+  let inst_encoded = bincode::serialize(&inst).unwrap();
+  fs::write("nizk_inst", inst_encoded).expect("Unable to write file");
+}
+
+pub extern "C" fn nizk_read_gens() -> *const NIZKGens {
+  let data = fs::read("nizk_gens").expect("Unable to read gens");
+  let gens: NIZKGens = bincode::deserialize(&data).unwrap();
+  Box::into_raw(Box::new(gens))
+}
+
+pub extern "C" fn nizk_read_inst() -> *const Instance {
+  let data = fs::read("nizk_inst").expect("Unable to read inst");
+  let inst: Instance = bincode::deserialize(&data).unwrap();
+  Box::into_raw(Box::new(inst))
+}
+
+#[no_mangle]
+pub extern "C" fn nizk_prove(gens: *mut NIZKGens, inst: *mut Instance, vars: Vec<[u8; 32]>, inputs: Vec<[u8; 32]>) {
+  let assignment_vars = VarsAssignment::new(&vars).unwrap();
+  let assignment_inputs = InputsAssignment::new(&inputs).unwrap();
+  let gens = unsafe { Box::from_raw(gens) };
+  let inst = unsafe { Box::from_raw(inst) };
+  let res = inst.is_sat(&assignment_vars, &assignment_inputs);
+  assert_eq!(res.unwrap(), true);
+  let mut prover_transcript = Transcript::new(b"zkmb_proof");
+  let proof = NIZK::prove(
+    &inst,
+    assignment_vars,
+    &assignment_inputs,
+    &gens,
+    &mut prover_transcript,
+  );
+
+  let proof_encoded = bincode::serialize(&proof).unwrap();
+  fs::write("r1cs_proof", proof_encoded).expect("Unable to write file");
+}
+
+#[no_mangle]
+pub extern "C" fn nizk_verify(gens: *mut NIZKGens, inst: *mut Instance, proof: *mut NIZK, inputs: Vec<[u8; 32]>) -> bool {
+  let assignment_inputs = InputsAssiganment::new(&inputs).unwrap();
+  let gens = unsafe { Box::from_raw(gens) };
+  let inst = unsafe { Box::from_raw(inst) };
+  let proof = unsafe { Box::from_raw(proof)};
+  let mut verifier_transcript = Transcript::new(b"zkmb_proof");
+  let result = proof
+    .verify(&inst, &assignment_inputs, &mut verifier_transcript, &gens)
+    .is_ok();
+  println!("{}", result);
+  result
+}
+
+#[no_mangle]
+pub extern "C" fn test_fn(size: libc::size_t, array_pointer: *const libc::uint8_t) {
+  let arr = unsafe { std::slice::from_raw_parts(array_pointer as *const u8, size as usize) };
+  let arr = arr.to_vec();
+  for e in arr {
+    println!("{}", e);
   }
 }
