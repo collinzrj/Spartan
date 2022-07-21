@@ -788,7 +788,7 @@ pub extern "C" fn nizk_prove(gens: *mut NIZKGens, inst: *mut Instance, vars: Vec
 
 #[no_mangle]
 pub extern "C" fn nizk_verify(gens: *mut NIZKGens, inst: *mut Instance, proof: *mut NIZK, inputs: Vec<[u8; 32]>) -> bool {
-  let assignment_inputs = InputsAssiganment::new(&inputs).unwrap();
+  let assignment_inputs = InputsAssignment::new(&inputs).unwrap();
   let gens = unsafe { Box::from_raw(gens) };
   let inst = unsafe { Box::from_raw(inst) };
   let proof = unsafe { Box::from_raw(proof)};
@@ -801,10 +801,11 @@ pub extern "C" fn nizk_verify(gens: *mut NIZKGens, inst: *mut Instance, proof: *
 }
 
 #[no_mangle]
-pub extern "C" fn test_fn(size: libc::size_t, array_pointer: *const libc::uint8_t) {
-  let arr = unsafe { std::slice::from_raw_parts(array_pointer as *const u8, size as usize) };
+pub extern "C" fn test_fn(size: libc::size_t, array_pointer: *const libc::uint32_t) {
+  let arr = unsafe { std::slice::from_raw_parts(array_pointer as *const u32, size as usize) };
   let arr = arr.to_vec();
   for e in arr {
     println!("{}", e);
   }
+  println!("this is new Spartan");
 }
