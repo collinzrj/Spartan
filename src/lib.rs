@@ -45,6 +45,7 @@ use std::fs;
 use num::bigint::BigInt;
 use num::bigint::ToBigInt;
 use std::io::{self, prelude::*, BufReader};
+use std::time::{Duration, Instant};
 use libc;
 use std;
 
@@ -742,15 +743,66 @@ mod tests {
   }
 }
 
-#[no_mangle]
-pub extern "C" fn nizk_generate(matrix_A: Vec<(usize, usize, [u8; 32])>, matrix_B: Vec<(usize, usize, [u8; 32])>, matrix_C: Vec<(usize, usize, [u8; 32])>, num_constraints: usize, num_variables: usize, num_inputs: usize) {  
-  let gens = NIZKGens::new(num_constraints, num_variables, num_inputs);
-  let inst = Instance::new(num_constraints, num_variables, num_inputs, &matrix_A, &matrix_B, &matrix_C).unwrap();
+fn pad_32_little_endian(big_int_vec: Vec<u8>) -> ([u8;32]) {
+  let mut byte_array: [u8; 32] = [0; 32];
+  for i in 0..32 {
+    if i < big_int_vec.len() {
+      byte_array[i] = big_int_vec[i];
+    } else {
+      byte_array[i] = 0;
+    }
+  }
 
-  let gens_encoded = bincode::serialize(&gens).unwrap();
-  fs::write("nizk_gens", gens_encoded).expect("Unable to write file");
-  let inst_encoded = bincode::serialize(&inst).unwrap();
-  fs::write("nizk_inst", inst_encoded).expect("Unable to write file");
+  byte_array
+}
+
+#[no_mangle]
+pub extern "C" fn nizk_test(matrixs: SpartanR1CSMatrixs, var_assignment: SpartanAssignment, input_assignment: SpartanAssignment, num_constraints: usize) {
+  let my_vars = transform_spartan_assignment(&var_assignment);
+  let my_inputs = transform_spartan_assignment(&input_assignment);
+
+  let my_matrix_A = transform_spartan_matrix(matrixs.A);
+  let my_matrix_B = transform_spartan_matrix(matrixs.B);
+  let my_matrix_C = transform_spartan_matrix(matrixs.C);
+
+  let gens = NIZKGens::new(num_constraints, var_assignment.size, input_assignment.size);
+  let inst = Instance::new(num_constraints, var_assignment.size, input_assignment.size, &my_matrix_A, &my_matrix_B, &my_matrix_C).unwrap();
+  let assignment_vars = VarsAssignment::new(&my_vars).unwrap();
+  let assignment_inputs = InputsAssignment::new(&my_inputs).unwrap();
+  let res = inst.is_sat(&assignment_vars, &assignment_inputs);
+  assert_eq!(res.unwrap(), true);
+  println!("Looks like the assignment satisfies!");
+  // Create proof
+  let mut prover_transcript = Transcript::new(b"zkmb_proof");
+  let proof_time = Instant::now(); // start time of proof 
+  let proof = NIZK::prove(
+    &inst, 
+    assignment_vars, 
+    &assignment_inputs, 
+    &gens, 
+    &mut prover_transcript);
+  println!("Done with NIZK proof generation!");
+  println!("NIZK proof took {}", proof_time.elapsed().as_millis()); // end time
+
+  // Verify proof
+  let mut verifier_transcript = Transcript::new(b"zkmb_proof");
+  let verif_time = Instant::now();
+  assert!(proof
+    .verify(&inst, &assignment_inputs, &mut verifier_transcript, &gens)
+    .is_ok());
+  println!("NIZK proof verification successful!"); 
+  println!("NIZK verif took {}", verif_time.elapsed().as_millis()); 
+}
+
+#[no_mangle]
+pub extern "C" fn nizk_generate(matrix_A: Vec<Entry>, matrix_B: Vec<Entry>, matrix_C: Vec<Entry>, num_constraints: usize, num_variables: usize, num_inputs: usize) {  
+  // let gens = NIZKGens::new(num_constraints, num_variables, num_inputs);
+  // let inst = Instance::new(num_constraints, num_variables, num_inputs, &matrix_A, &matrix_B, &matrix_C).unwrap();
+
+  // let gens_encoded = bincode::serialize(&gens).unwrap();
+  // fs::write("nizk_gens", gens_encoded).expect("Unable to write file");
+  // let inst_encoded = bincode::serialize(&inst).unwrap();
+  // fs::write("nizk_inst", inst_encoded).expect("Unable to write file");
 }
 
 pub extern "C" fn nizk_read_gens() -> *const NIZKGens {
@@ -800,12 +852,64 @@ pub extern "C" fn nizk_verify(gens: *mut NIZKGens, inst: *mut Instance, proof: *
   result
 }
 
-#[no_mangle]
-pub extern "C" fn test_fn(size: libc::size_t, array_pointer: *const libc::uint32_t) {
-  let arr = unsafe { std::slice::from_raw_parts(array_pointer as *const u32, size as usize) };
-  let arr = arr.to_vec();
-  for e in arr {
-    println!("{}", e);
+// #[no_mangle]
+// pub extern "C" fn test_fn(size: libc::size_t, array_pointer: *const libc::uint8_t) {
+//   let arr = get_vec_u8_32(size, array_pointer);
+//   for a in arr {
+//     for e in a {
+//       print!("{} ", e);
+//     }
+//     print!("\n");
+//   }
+// }
+
+#[repr(C)]
+pub struct Entry {
+  row: usize,
+  col: usize,
+  element: SpartanFieldElement 
+}
+
+#[repr(C)]
+pub struct SpartanFieldElement {
+  val: [u8; 32]
+}
+
+#[repr(C)]
+pub struct SpartanAssignment {
+  val: *const SpartanFieldElement,
+  size: usize
+}
+
+#[repr(C)]
+pub struct SpartanMatrix {
+  val: *const Entry,
+  size: usize
+}
+
+#[repr(C)]
+pub struct SpartanR1CSMatrixs {
+  A: SpartanMatrix,
+  B: SpartanMatrix,
+  C: SpartanMatrix
+}
+
+fn transform_spartan_assignment(assignment: &SpartanAssignment) -> Vec<[u8; 32]> {
+  let arr = unsafe { std::slice::from_raw_parts(assignment.val, assignment.size) };
+  let mut result: Vec<[u8; 32]> = Vec::new();
+  for element in arr {
+    result.push(element.val);
   }
-  println!("this is new Spartan");
+  result
+}
+
+fn transform_spartan_matrix(matrix: SpartanMatrix) -> Vec<(usize, usize, [u8; 32])> {
+  println!("entry transform");
+  let arr = unsafe { std::slice::from_raw_parts(matrix.val, matrix.size) };
+  println!("cast done");
+  let mut result: Vec<(usize, usize, [u8;32])> = Vec::new();
+  for entry in arr {
+    result.push((entry.row, entry.col, entry.element.val));
+  }
+  result
 }
