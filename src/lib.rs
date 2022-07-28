@@ -758,17 +758,17 @@ fn pad_32_little_endian(big_int_vec: Vec<u8>) -> ([u8;32]) {
 
 #[no_mangle]
 pub extern "C" fn nizk_test(matrixs: SpartanR1CSMatrixs, var_assignment: SpartanAssignment, input_assignment: SpartanAssignment, num_constraints: usize) {
-  let my_vars = transform_spartan_assignment(&var_assignment);
-  let my_inputs = transform_spartan_assignment(&input_assignment);
+  let my_vars = &var_assignment;
+  let my_inputs = &input_assignment;
 
-  let my_matrix_A = transform_spartan_matrix(matrixs.A);
-  let my_matrix_B = transform_spartan_matrix(matrixs.B);
-  let my_matrix_C = transform_spartan_matrix(matrixs.C);
+  let my_matrix_A = matrixs.A.to_vec();
+  let my_matrix_B = matrixs.B.to_vec();
+  let my_matrix_C = matrixs.C.to_vec();
 
   let gens = NIZKGens::new(num_constraints, var_assignment.size, input_assignment.size);
   let inst = Instance::new(num_constraints, var_assignment.size, input_assignment.size, &my_matrix_A, &my_matrix_B, &my_matrix_C).unwrap();
-  let assignment_vars = VarsAssignment::new(&my_vars).unwrap();
-  let assignment_inputs = InputsAssignment::new(&my_inputs).unwrap();
+  let assignment_vars = VarsAssignment::new(&my_vars.to_vec()).unwrap();
+  let assignment_inputs = InputsAssignment::new(&my_inputs.to_vec()).unwrap();
   let res = inst.is_sat(&assignment_vars, &assignment_inputs);
   assert_eq!(res.unwrap(), true);
   println!("Looks like the assignment satisfies!");
@@ -792,62 +792,108 @@ pub extern "C" fn nizk_test(matrixs: SpartanR1CSMatrixs, var_assignment: Spartan
     .is_ok());
   println!("NIZK proof verification successful!"); 
   println!("NIZK verif took {}", verif_time.elapsed().as_millis()); 
+  
+  // // try SNARK prove (not NIZK)
+
+  // let gens2 = SNARKGens::new(num_constraints, var_assignment.size, input_assignment.size, num_non_zero_entries_b);
+  // // create a commitment to the R1CS instance
+  // let (comm, decomm) = SNARK::encode(&inst, &gens2);
+
+  // let mut prover_transcript2 = Transcript::new(b"snark_example");
+  // let proof_time_2 = Instant::now(); // start time of proof 
+  // let proof2 = SNARK::prove(&inst, &decomm, assignment_vars, &assignment_inputs, &gens2, &mut prover_transcript2);
+  // println!("SNARK proof took {}", proof_time_2.elapsed().as_millis()); // end time
+
+  // let mut verifier_transcript2 = Transcript::new(b"snark_example");
+  // let verif_time_2 = Instant::now(); // start time of proof 
+  // assert!(proof2
+  //     .verify(&comm, &assignment_inputs, &mut verifier_transcript2, &gens2)
+  //     .is_ok());
+  // println!("SNARK verif took {}", verif_time_2.elapsed().as_millis()); // end time
+  // println!("proof verification successful!");
 }
 
 #[no_mangle]
-pub extern "C" fn nizk_generate(matrix_A: Vec<Entry>, matrix_B: Vec<Entry>, matrix_C: Vec<Entry>, num_constraints: usize, num_variables: usize, num_inputs: usize) {  
-  // let gens = NIZKGens::new(num_constraints, num_variables, num_inputs);
-  // let inst = Instance::new(num_constraints, num_variables, num_inputs, &matrix_A, &matrix_B, &matrix_C).unwrap();
-
-  // let gens_encoded = bincode::serialize(&gens).unwrap();
-  // fs::write("nizk_gens", gens_encoded).expect("Unable to write file");
-  // let inst_encoded = bincode::serialize(&inst).unwrap();
-  // fs::write("nizk_inst", inst_encoded).expect("Unable to write file");
+pub extern "C" fn nizk_generate(matrixs: SpartanR1CSMatrixs, var_assignment: SpartanAssignment, input_assignment: SpartanAssignment, num_constraints: usize, gens_path: *mut libc::c_char, inst_path: *mut libc::c_char) {  
+  let gens = NIZKGens::new(num_constraints, var_assignment.size, input_assignment.size);
+  let matrix_A = matrixs.A.to_vec();
+  let matrix_B = matrixs.B.to_vec();
+  let matrix_C = matrixs.C.to_vec();
+  let inst = Instance::new(num_constraints, var_assignment.size, input_assignment.size, &matrix_A, &matrix_B, &matrix_C).unwrap();
+  let gens_encoded = bincode::serialize(&gens).unwrap();
+  let gens_path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(gens_path) };
+  let gens_path: &str = gens_path.to_str().unwrap();
+  fs::write(gens_path, gens_encoded).expect("Unable to write file");
+  let inst_encoded = bincode::serialize(&inst).unwrap();
+  let inst_path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(inst_path) };
+  let inst_path: &str = inst_path.to_str().unwrap();
+  fs::write(inst_path, inst_encoded).expect("Unable to write file");
 }
 
-pub extern "C" fn nizk_read_gens() -> *const NIZKGens {
-  let data = fs::read("nizk_gens").expect("Unable to read gens");
+#[no_mangle]
+pub extern "C" fn nizk_read_gens(gens_path: *mut libc::c_char) -> *mut NIZKGens {
+  let gens_path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(gens_path) };
+  let gens_path: &str = gens_path.to_str().unwrap();
+  let data = fs::read(gens_path).expect("Unable to read gens");
   let gens: NIZKGens = bincode::deserialize(&data).unwrap();
   Box::into_raw(Box::new(gens))
 }
 
-pub extern "C" fn nizk_read_inst() -> *const Instance {
-  let data = fs::read("nizk_inst").expect("Unable to read inst");
+#[no_mangle]
+pub extern "C" fn nizk_read_inst(inst_path: *mut libc::c_char) -> *mut Instance {
+  let inst_path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(inst_path) };
+  let inst_path: &str = inst_path.to_str().unwrap();
+  let data = fs::read(inst_path).expect("Unable to read inst");
   let inst: Instance = bincode::deserialize(&data).unwrap();
   Box::into_raw(Box::new(inst))
 }
 
 #[no_mangle]
-pub extern "C" fn nizk_prove(gens: *mut NIZKGens, inst: *mut Instance, vars: Vec<[u8; 32]>, inputs: Vec<[u8; 32]>) {
-  let assignment_vars = VarsAssignment::new(&vars).unwrap();
-  let assignment_inputs = InputsAssignment::new(&inputs).unwrap();
-  let gens = unsafe { Box::from_raw(gens) };
-  let inst = unsafe { Box::from_raw(inst) };
-  let res = inst.is_sat(&assignment_vars, &assignment_inputs);
-  assert_eq!(res.unwrap(), true);
-  let mut prover_transcript = Transcript::new(b"zkmb_proof");
-  let proof = NIZK::prove(
-    &inst,
-    assignment_vars,
-    &assignment_inputs,
-    &gens,
-    &mut prover_transcript,
-  );
-
-  let proof_encoded = bincode::serialize(&proof).unwrap();
-  fs::write("r1cs_proof", proof_encoded).expect("Unable to write file");
+pub extern "C" fn nizk_read_proof() -> *mut NIZK {
+  let data = fs::read("r1cs_proof").expect("Unable to read proof");
+  let proof: NIZK = bincode::deserialize(&data).unwrap();
+  Box::into_raw(Box::new(proof))
 }
 
 #[no_mangle]
-pub extern "C" fn nizk_verify(gens: *mut NIZKGens, inst: *mut Instance, proof: *mut NIZK, inputs: Vec<[u8; 32]>) -> bool {
-  let assignment_inputs = InputsAssignment::new(&inputs).unwrap();
-  let gens = unsafe { Box::from_raw(gens) };
-  let inst = unsafe { Box::from_raw(inst) };
-  let proof = unsafe { Box::from_raw(proof)};
+pub extern "C" fn nizk_prove(gens: *mut NIZKGens, inst: *mut Instance, var_assignment: SpartanAssignment, input_assignment: SpartanAssignment, proof_path: *mut libc::c_char) {
+  let assignment_vars = VarsAssignment::new(&var_assignment.to_vec()).unwrap();
+  let assignment_inputs = InputsAssignment::new(&input_assignment.to_vec()).unwrap();
+  println!("assignment_vars len {}", assignment_vars.assignment.len());
+  println!("assignment_inputs len {}", assignment_inputs.assignment.len());
+  // Box::from_raw will free the memory
+  let gens = unsafe { &*gens };
+  let inst = unsafe { &*inst };
+  let res = inst.is_sat(&assignment_vars, &assignment_inputs);
+  assert_eq!(res.unwrap(), true);
+  let mut prover_transcript = Transcript::new(b"zkmb_proof");
+  let proof_time = Instant::now(); // start time of proof 
+  let proof = NIZK::prove(
+    inst,
+    assignment_vars,
+    &assignment_inputs,
+    gens,
+    &mut prover_transcript,
+  );
+  println!("NIZK proof took {}", proof_time.elapsed().as_millis()); // end time
+  let proof_encoded = bincode::serialize(&proof).unwrap();
+  let proof_path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(proof_path) };
+  let proof_path: &str = proof_path.to_str().unwrap();
+  fs::write(proof_path, proof_encoded).expect("Unable to write file");
+}
+
+#[no_mangle]
+pub extern "C" fn nizk_verify(gens: *mut NIZKGens, inst: *mut Instance, proof: *mut NIZK, input_assignment: SpartanAssignment) -> bool {
+  let assignment_inputs = InputsAssignment::new(&input_assignment.to_vec()).unwrap();
+  let gens = unsafe { &*gens };
+  let inst = unsafe { &*inst };
+  let proof = unsafe { &*proof };
   let mut verifier_transcript = Transcript::new(b"zkmb_proof");
+  let verify_time = Instant::now();
   let result = proof
-    .verify(&inst, &assignment_inputs, &mut verifier_transcript, &gens)
+    .verify(inst, &assignment_inputs, &mut verifier_transcript, gens)
     .is_ok();
+  println!("NIZK verify took {}", verify_time.elapsed().as_millis());
   println!("{}", result);
   result
 }
@@ -881,10 +927,34 @@ pub struct SpartanAssignment {
   size: usize
 }
 
+impl SpartanAssignment {
+  fn to_vec(&self) -> Vec<[u8; 32]> {
+    let arr = unsafe { std::slice::from_raw_parts(self.val, self.size) };
+    let mut result: Vec<[u8; 32]> = Vec::new();
+    for element in arr {
+      result.push(element.val);
+    }
+    result 
+  }
+}
+
 #[repr(C)]
 pub struct SpartanMatrix {
   val: *const Entry,
   size: usize
+}
+
+impl SpartanMatrix {
+  fn to_vec(&self) -> Vec<(usize, usize, [u8; 32])> {
+    println!("entry transform");
+    let arr = unsafe { std::slice::from_raw_parts(self.val, self.size) };
+    println!("cast done");
+    let mut result: Vec<(usize, usize, [u8;32])> = Vec::new();
+    for entry in arr {
+      result.push((entry.row, entry.col, entry.element.val));
+    }
+    result 
+  }
 }
 
 #[repr(C)]
@@ -892,24 +962,4 @@ pub struct SpartanR1CSMatrixs {
   A: SpartanMatrix,
   B: SpartanMatrix,
   C: SpartanMatrix
-}
-
-fn transform_spartan_assignment(assignment: &SpartanAssignment) -> Vec<[u8; 32]> {
-  let arr = unsafe { std::slice::from_raw_parts(assignment.val, assignment.size) };
-  let mut result: Vec<[u8; 32]> = Vec::new();
-  for element in arr {
-    result.push(element.val);
-  }
-  result
-}
-
-fn transform_spartan_matrix(matrix: SpartanMatrix) -> Vec<(usize, usize, [u8; 32])> {
-  println!("entry transform");
-  let arr = unsafe { std::slice::from_raw_parts(matrix.val, matrix.size) };
-  println!("cast done");
-  let mut result: Vec<(usize, usize, [u8;32])> = Vec::new();
-  for entry in arr {
-    result.push((entry.row, entry.col, entry.element.val));
-  }
-  result
 }

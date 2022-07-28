@@ -12,3 +12,5 @@ Cargo.lock
 *.txt
 
 rust_example*
+spartan-stamp
+tmp
