@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use rayon::prelude::*;
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct DensePolynomial {
   num_vars: usize, // the number of variables in the multilinear polynomial
   len: usize,

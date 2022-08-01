@@ -50,11 +50,13 @@ use libc;
 use std;
 
 /// `ComputationCommitment` holds a public preprocessed NP statement (e.g., R1CS)
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ComputationCommitment {
   comm: R1CSCommitment,
 }
 
 /// `ComputationDecommitment` holds information to decommit `ComputationCommitment`
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ComputationDecommitment {
   decomm: R1CSDecommitment,
 }
@@ -281,6 +283,7 @@ impl Instance {
 }
 
 /// `SNARKGens` holds public parameters for producing and verifying proofs with the Spartan SNARK
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SNARKGens {
   gens_r1cs_sat: R1CSGens,
   gens_r1cs_eval: R1CSCommitmentGens,
@@ -813,6 +816,119 @@ pub extern "C" fn nizk_test(matrixs: SpartanR1CSMatrixs, var_assignment: Spartan
   // println!("proof verification successful!");
 }
 
+fn write_to_path(path: *mut libc::c_char, contents: Vec<u8>) {
+  let path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(path) };
+  let path: &str = path.to_str().unwrap();
+  fs::write(path, contents).expect("Unable to write file"); 
+}
+
+
+// Bridge SNARK
+#[no_mangle]
+pub extern "C" fn snark_generate(matrixs: SpartanR1CSMatrixs, var_assignment: SpartanAssignment, input_assignment: SpartanAssignment, num_constraints: usize, gens_path: *mut libc::c_char, inst_path: *mut libc::c_char, comm_path: *mut libc::c_char, decomm_path: *mut libc::c_char) {  
+  let gens = SNARKGens::new(num_constraints, var_assignment.size, input_assignment.size, matrixs.num_non_zero_entries);
+  let matrix_A = matrixs.A.to_vec();
+  let matrix_B = matrixs.B.to_vec();
+  let matrix_C = matrixs.C.to_vec();
+  let inst = Instance::new(num_constraints, var_assignment.size, input_assignment.size, &matrix_A, &matrix_B, &matrix_C).unwrap();
+  let (comm, decomm) = SNARK::encode(&inst, &gens);
+  let gens_encoded = bincode::serialize(&gens).unwrap();
+  write_to_path(gens_path, gens_encoded);
+  println!("snark check 1");
+  let inst_encoded = bincode::serialize(&inst).unwrap();
+  write_to_path(inst_path, inst_encoded);
+  println!("snark check 2");
+  let comm_encoded = bincode::serialize(&comm).unwrap();
+  write_to_path(comm_path, comm_encoded);
+  println!("snark check 3");
+  let decomm_encoded = bincode::serialize(&decomm).unwrap();
+  write_to_path(decomm_path, decomm_encoded);
+  println!("snark check 4");
+}
+
+#[no_mangle]
+pub extern "C" fn snark_read_gens(path: *mut libc::c_char) -> *mut SNARKGens {
+  let path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(path) };
+  let path: &str = path.to_str().unwrap();
+  let data = fs::read(path).expect("Unable to read gens");
+  let result: SNARKGens = bincode::deserialize(&data).unwrap();
+  Box::into_raw(Box::new(result))
+}
+
+#[no_mangle]
+pub extern "C" fn snark_read_inst(path: *mut libc::c_char) -> *mut Instance {
+  let path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(path) };
+  let path: &str = path.to_str().unwrap();
+  let data = fs::read(path).expect("Unable to read inst");
+  let result: Instance = bincode::deserialize(&data).unwrap();
+  Box::into_raw(Box::new(result))
+}
+
+#[no_mangle]
+pub extern "C" fn snark_read_comm(path: *mut libc::c_char) -> *mut ComputationCommitment {
+  let path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(path) };
+  let path: &str = path.to_str().unwrap();
+  let data = fs::read(path).expect("Unable to read comm");
+  let result: ComputationCommitment = bincode::deserialize(&data).unwrap();
+  Box::into_raw(Box::new(result))
+}
+
+#[no_mangle]
+pub extern "C" fn snark_read_decomm(path: *mut libc::c_char) -> *mut ComputationDecommitment {
+  let path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(path) };
+  let path: &str = path.to_str().unwrap();
+  let data = fs::read(path).expect("Unable to read decomm");
+  let result: ComputationDecommitment = bincode::deserialize(&data).unwrap();
+  Box::into_raw(Box::new(result))
+}
+
+#[no_mangle]
+pub extern "C" fn snark_read_proof(path: *mut libc::c_char) -> *mut SNARK {
+  let path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(path) };
+  let path: &str = path.to_str().unwrap();
+  let data = fs::read("r1cs_proof").expect("Unable to read proof");
+  let result: SNARK = bincode::deserialize(&data).unwrap();
+  Box::into_raw(Box::new(result))
+}
+
+#[no_mangle]
+pub extern "C" fn snark_prove(gens: *mut SNARKGens, inst: *mut Instance, decomm: *mut ComputationDecommitment, var_assignment: SpartanAssignment, input_assignment: SpartanAssignment, proof_path: *mut libc::c_char) {
+  let assignment_vars = VarsAssignment::new(&var_assignment.to_vec()).unwrap();
+  let assignment_inputs = InputsAssignment::new(&input_assignment.to_vec()).unwrap();
+  // Box::from_raw will free the memory
+  let gens = unsafe { &*gens };
+  let inst = unsafe { &*inst };
+  let decomm = unsafe { &*decomm };
+  let res = inst.is_sat(&assignment_vars, &assignment_inputs);
+  assert_eq!(res.unwrap(), true);
+  let mut prover_transcript = Transcript::new(b"zkmb_proof");
+  let time = Instant::now();
+  let proof = SNARK::prove(inst, decomm, assignment_vars, &assignment_inputs, gens, &mut prover_transcript);
+  println!("SNARK proof took {}", time.elapsed().as_millis());
+  let proof_encoded = bincode::serialize(&proof).unwrap();
+  let proof_path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(proof_path) };
+  let proof_path: &str = proof_path.to_str().unwrap();
+  fs::write(proof_path, proof_encoded).expect("Unable to write file");
+}
+
+#[no_mangle]
+pub extern "C" fn snark_verify(gens: *mut SNARKGens, comm: *mut ComputationCommitment, proof: *mut SNARK, input_assignment: SpartanAssignment) -> bool {
+  let assignment_inputs = InputsAssignment::new(&input_assignment.to_vec()).unwrap();
+  let gens = unsafe { &*gens };
+  let comm = unsafe { &*comm };
+  let proof = unsafe { &*proof };
+  let mut verifier_transcript = Transcript::new(b"zkmb_proof");
+  let verify_time = Instant::now();
+  let result = proof
+    .verify(comm, &assignment_inputs, &mut verifier_transcript, gens)
+    .is_ok();
+  println!("NIZK verify took {}", verify_time.elapsed().as_millis());
+  println!("{}", result);
+  result
+}
+
+
+// Bridge NIZK
 #[no_mangle]
 pub extern "C" fn nizk_generate(matrixs: SpartanR1CSMatrixs, var_assignment: SpartanAssignment, input_assignment: SpartanAssignment, num_constraints: usize, gens_path: *mut libc::c_char, inst_path: *mut libc::c_char) {  
   let gens = NIZKGens::new(num_constraints, var_assignment.size, input_assignment.size);
@@ -849,8 +965,10 @@ pub extern "C" fn nizk_read_inst(inst_path: *mut libc::c_char) -> *mut Instance 
 }
 
 #[no_mangle]
-pub extern "C" fn nizk_read_proof() -> *mut NIZK {
-  let data = fs::read("r1cs_proof").expect("Unable to read proof");
+pub extern "C" fn nizk_read_proof(path: *mut libc::c_char) -> *mut NIZK {
+  let path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(path) };
+  let path: &str = path.to_str().unwrap();
+  let data = fs::read(path).expect("Unable to read proof");
   let proof: NIZK = bincode::deserialize(&data).unwrap();
   Box::into_raw(Box::new(proof))
 }
@@ -867,7 +985,7 @@ pub extern "C" fn nizk_prove(gens: *mut NIZKGens, inst: *mut Instance, var_assig
   let res = inst.is_sat(&assignment_vars, &assignment_inputs);
   assert_eq!(res.unwrap(), true);
   let mut prover_transcript = Transcript::new(b"zkmb_proof");
-  let proof_time = Instant::now(); // start time of proof 
+  let proof_time = Instant::now();
   let proof = NIZK::prove(
     inst,
     assignment_vars,
@@ -875,7 +993,7 @@ pub extern "C" fn nizk_prove(gens: *mut NIZKGens, inst: *mut Instance, var_assig
     gens,
     &mut prover_transcript,
   );
-  println!("NIZK proof took {}", proof_time.elapsed().as_millis()); // end time
+  println!("NIZK proof took {}", proof_time.elapsed().as_millis());
   let proof_encoded = bincode::serialize(&proof).unwrap();
   let proof_path: &std::ffi::CStr = unsafe { std::ffi::CStr::from_ptr(proof_path) };
   let proof_path: &str = proof_path.to_str().unwrap();
@@ -884,10 +1002,15 @@ pub extern "C" fn nizk_prove(gens: *mut NIZKGens, inst: *mut Instance, var_assig
 
 #[no_mangle]
 pub extern "C" fn nizk_verify(gens: *mut NIZKGens, inst: *mut Instance, proof: *mut NIZK, input_assignment: SpartanAssignment) -> bool {
+  println!("will read assign");
   let assignment_inputs = InputsAssignment::new(&input_assignment.to_vec()).unwrap();
+  println!("will read gens");
   let gens = unsafe { &*gens };
+  println!("will read inst");
   let inst = unsafe { &*inst };
+  println!("will read proof");
   let proof = unsafe { &*proof };
+  println!("read all done");
   let mut verifier_transcript = Transcript::new(b"zkmb_proof");
   let verify_time = Instant::now();
   let result = proof
@@ -898,17 +1021,8 @@ pub extern "C" fn nizk_verify(gens: *mut NIZKGens, inst: *mut Instance, proof: *
   result
 }
 
-// #[no_mangle]
-// pub extern "C" fn test_fn(size: libc::size_t, array_pointer: *const libc::uint8_t) {
-//   let arr = get_vec_u8_32(size, array_pointer);
-//   for a in arr {
-//     for e in a {
-//       print!("{} ", e);
-//     }
-//     print!("\n");
-//   }
-// }
 
+// Bridge Struct
 #[repr(C)]
 pub struct Entry {
   row: usize,
@@ -923,7 +1037,7 @@ pub struct SpartanFieldElement {
 
 #[repr(C)]
 pub struct SpartanAssignment {
-  val: *const SpartanFieldElement,
+  val: *mut SpartanFieldElement,
   size: usize
 }
 
@@ -946,9 +1060,7 @@ pub struct SpartanMatrix {
 
 impl SpartanMatrix {
   fn to_vec(&self) -> Vec<(usize, usize, [u8; 32])> {
-    println!("entry transform");
     let arr = unsafe { std::slice::from_raw_parts(self.val, self.size) };
-    println!("cast done");
     let mut result: Vec<(usize, usize, [u8;32])> = Vec::new();
     for entry in arr {
       result.push((entry.row, entry.col, entry.element.val));
@@ -961,5 +1073,6 @@ impl SpartanMatrix {
 pub struct SpartanR1CSMatrixs {
   A: SpartanMatrix,
   B: SpartanMatrix,
-  C: SpartanMatrix
+  C: SpartanMatrix,
+  num_non_zero_entries: usize
 }

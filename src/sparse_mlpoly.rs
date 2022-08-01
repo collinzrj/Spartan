@@ -219,6 +219,7 @@ impl AppendToTranscript for DerefsCommitment {
   }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 struct AddrTimestamps {
   ops_addr_usize: Vec<Vec<usize>>,
   ops_addr: Vec<DensePolynomial>,
@@ -280,6 +281,7 @@ impl AddrTimestamps {
   }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct MultiSparseMatPolynomialAsDense {
   batch_size: usize,
   val: Vec<DensePolynomial>,
@@ -289,6 +291,7 @@ pub struct MultiSparseMatPolynomialAsDense {
   comb_mem: DensePolynomial,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SparseMatPolyCommitmentGens {
   gens_ops: PolyCommitmentGens,
   gens_mem: PolyCommitmentGens,
